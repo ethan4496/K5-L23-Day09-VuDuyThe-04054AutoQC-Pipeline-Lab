@@ -48,7 +48,21 @@ Nguyên nhân: calib chỉ có 6 cặp gần trùng, nên mỗi cặp làm recal
 4. **Nhầm lớp mà model lớn cũng nhầm.** `WRONG_CLASS` trên calib có 1 FN (recall 0,83). Ngoài ra, lỗi chèn trong calib chủ yếu là person→car, còn raw nghiêng về car/truck/bus. Đây là những lớp model cũng hay lẫn, nên recall trên raw có thể thấp hơn calib.
 
 ## 5. Train: raw vs clean (tùy chọn, chấm riêng)
-**Chưa chạy.** Mình ưu tiên hoàn thành phần lõi (Bước 1–5). Phần train trên Colab sẽ làm sau nếu còn thời gian.
+Cấu hình train: `yolo26n.pt`, 20 epoch, imgsz 640, batch 16, 2 seed (0 và 1), GPU T4 trên Colab. Đánh giá trên cùng tập `data/test` (100 ảnh). `clean` là **bản nháp Hold** (`manifest_sha1 = f1fbd72…`), còn 38 ảnh có cảnh báo chưa duyệt. Bảng lấy từ `submission/results/comparison.md`:
+
+| biến thể | #ảnh train | số seed | map50 (TB ± độ lệch) | map50_95 (TB ± độ lệch) | precision (TB ± độ lệch) | recall (TB ± độ lệch) |
+|---|---|---|---|---|---|---|
+| raw | 224 | 2 | 0.726 ± 0.000 | 0.512 ± 0.004 | 0.764 ± 0.061 | 0.649 ± 0.028 |
+| clean | 202 | 2 | 0.701 ± 0.025 | 0.487 ± 0.008 | 0.759 ± 0.003 | 0.625 ± 0.019 |
+
+**Chênh mAP50 (clean − raw) = −0,025.** Con số này **bằng đúng độ lệch chuẩn giữa các seed của `clean`** (0,025). Hai seed của `clean` cho 0,718 và 0,683, chênh nhau 0,035. Riêng seed 0 thì chỉ chênh −0,008 (0,718 so với 0,726). Với 2 seed và 100 ảnh test, khoảng chênh này **nằm trong nhiễu**. Vì vậy **chưa kết luận được** rằng clean kém hơn hay tốt hơn raw. Điều duy nhất nói được là, trong thí nghiệm này, làm sạch **không cho thấy lợi ích đo được** về mAP50.
+
+Phân rã theo lớp cho thấy phần lớn khoảng chênh đến từ **truck**. AP50 của truck ở clean là 0,590 và 0,486, còn ở raw là 0,657 và 0,640. Car và person gần như không đổi (car khoảng 0,74 so với 0,74, person khoảng 0,82 so với 0,82). Truck chỉ có 41 box và bus 32 box (`class_stats.csv`), nên mỗi seed dao động rất mạnh.
+
+**Giả thuyết và cách kiểm:**
+1. **Rò rỉ test làm điểm của raw bị thổi phồng.** Raw chứa 5 ảnh `LEAK_TEST` trùng đúng ảnh test (`test_009`, `test_033`, `test_039`, `test_044`, `test_085`), nên model raw đã "thấy" một phần đề thi. *Cách kiểm:* đánh giá lại cả hai model trên test **sau khi bỏ 5 ảnh đó** (95 ảnh). Nếu raw tụt nhiều hơn clean thì một phần lợi thế của raw là do rò rỉ.
+2. **Clean ít dữ liệu hơn, lớp hiếm bị ảnh hưởng nhiều nhất.** Clean có ít hơn 22 ảnh (−10%). Autofix còn xoá 20 dòng nhãn, và 3 file nhãn thành rỗng. Với lớp truck vốn đã ít box, mất vài box là đủ làm AP dao động. *Cách kiểm:* đếm box truck/bus trong `clean_v1/labels` so với raw. Tăng lên ≥ 5 seed để ước lượng độ lệch đáng tin hơn. Train thêm một biến thể "raw chỉ bỏ 5 ảnh leak" để tách tác động của rò rỉ khỏi tác động của việc làm sạch.
+3. **Clean vẫn còn nhãn máy chưa duyệt.** Bản này là Hold: 45 ảnh trong hàng đợi chưa được duyệt, còn 16 cờ `LOOSE_BOX` và 11 cờ `FALSE_POS`. Ngoài ra 80 ảnh được người duyệt chiếm chưa đến 40% bộ dữ liệu, nên khác biệt giữa raw và clean về chất lượng nhãn có thể quá nhỏ để thấy được trên 100 ảnh test. *Cách kiểm:* duyệt hết hàng đợi để gate ra Release, rồi train lại và so sánh.
 
 ## 6. Quyết định và ghi chú AI
 **(a) Quyết định: HOLD, chưa phát hành `clean_v1`.** Để chuyển thành Release, số ảnh còn cảnh báo chưa duyệt phải giảm từ 38 xuống dưới 20,2 (10% của 202). Tức là cần duyệt thêm **≥ 18 ảnh**, tiếp tục từ `img_0210` trong `05_review_queue.csv`. Không nên hạ `conf` hay nâng ngưỡng chỉ để hàng đợi vừa ngân sách, vì checker gần như không thấy lỗi thì sẽ ra một Release giả.
